@@ -1,0 +1,389 @@
+---
+id: best-practices
+title: Custom Component Best Practices
+description: This article contains recommendations, tips and tricks for building and testing reusable custom components.
+---
+
+This article contains recommendations, tips and tricks for building and testing reusable custom components.
+
+## Determine the type of connection to use
+
+When examining a third-party's API documentation, take note of how they recommend authenticating with their API.
+If the third-party app supports multiple connection mechanisms (like OAuth 2.0 and a personal access token), consider a few factors when choosing which one(s) to support in your component.
+
+- The most prevalent auth type for integrations is the OAuth 2.0 auth code flow, and it's also the simplest for end users to understand.
+  With the auth code flow, end users click a single "connect" button in the config wizard which takes them to a consent screen in the third party.
+  Prismatic takes care of the rest (auth code exchange, token refresh, etc).
+  OAuth provides "scoped" permissions, meaning you don't have access to do everything the user who authenticated can do - only a subset of actions that your customer grants you permission to perform.
+- An alternative to the OAuth 2.0 auth code flow is the OAuth 2.0 client credentials flow (also sometimes called machine-to-machine M2M OAuth).
+  If the third-party app supports the client credentials flow, then your customers can log in to the third-party app, create a "system" user, and generate a client ID / client secret key pair.
+  This requires a little more work on the customer's part but provides the same "scoped" access to the third-party, and the credential is generally not tied to a specific user.
+- Many apps have "API Key" access of some sort, where a customer generates a personal access token in the app and pastes the token into a config wizard.
+  Like the OAuth 2.0 client credentials flow, API key requires a little more work on the customer user's part, and it's helpful to include some helper text in the comments of the input:
+
+  ```ts title="Provide helper text for connection inputs" {11-12}
+  export const acmeApiKey = connection({
+    key: "acmeApiKey",
+    label: "Acme API Key",
+    inputs: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "API Key",
+        type: "string",
+        required: true,
+        shown: true,
+        comments:
+          "To generate an Acme API key, log in to Acme and open settings > security > personal access token.",
+      },
+    },
+  });
+  ```
+
+- Whenever possible, avoid authenticating with basic auth (i.e. collecting your customer's username and password).
+  Instances that authenticate with basic auth are susceptible to breaking if the customer user changes their password.
+
+### Handle multiple connection types in a custom component
+
+It's possible to support multiple connection types in a custom component.
+Suppose that your component has an `acmeOauth2` connection as well as a personal access token `acmePat` connection type.
+Build a generic function that takes a connection, and returns an authenticated HTTP client that sets an `Authorization` header based on that connection type:
+
+```ts title="Generic HTTP client that supports multiple connection types"
+import { Connection } from "@prismatic-io/spectral";
+import { createClient } from "@prismatic-io/spectral/dist/clients/http";
+import { acmePat, acmeOauth2 } from "./connections";
+
+export const createAcmeClient = async (connection: Connection) => {
+  switch (connection.key) {
+    case acmePat.key:
+      return createClient({
+        baseUrl: "https://app.acme.com/api/1.0",
+        headers: {
+          // Connection input fields are accessible through the fields property
+          authorization: `Bearer ${connection.fields.apiKey}`,
+        },
+      });
+    case acmeOauth2.key:
+      return createClient({
+        baseUrl: "https://app.acme.com/api/1.0",
+        headers: {
+          // OAuth access tokens are stored in a tokens property
+          authorization: `Bearer ${connection.token?.access_token}`,
+        },
+      });
+    default:
+      throw new Error(`Unsupported connection type: ${connection.key}`);
+  }
+};
+```
+
+## Pagination in custom components
+
+Every app implements pagination differently.
+Some apps require you to pass page number and number of records to return as URL search parameters (i.e. `?page=5&page_size=20`).
+In that case, it's your job to keep track of which page you're on.
+Others return a "cursor" with the response (either in the body or as a response header).
+You can include that cursor with your next request to get another page of results.
+
+As you build an action for an API that paginates, ask yourself this question: _is it reasonable to pull down all records at one time?_.
+
+If the API you're interacting with returns 100 records at a time, for example, and you know that customers never have more than a few hundred records of a particular type, it probably makes sense to pack pagination logic into your custom action.
+That way, your customers don't need to keep track of page numbers or cursors - your action simply returns all results.
+In this example, Airtable returns a JSON payload with an `offset` property and array of `records` that we accumulate in a `do`/`while` loop:
+
+```ts title="Handling pagination within an action"
+export interface AirtableRecord {
+  id: string;
+  createdTime: string;
+  fields: Record<string, unknown>;
+}
+
+export interface AirtableRecordResponse {
+  offset: string;
+  records: AirtableRecord[];
+}
+
+const listRecords = action({
+  display: {
+    label: "List Records",
+    description: "List all records inside of the given table",
+  },
+  inputs: {
+    airtableConnection: connectionInput,
+    baseId: baseIdInput,
+    tableName: tableNameInput,
+    view: viewInput,
+  },
+  perform: async (context, params) => {
+    const client = createAirtableClient(params.airtableConnection);
+
+    const records: AirtableRecord[] = [];
+    let offset = "";
+
+    do {
+      const { data } = await client.get<AirtableRecordResponse>(
+        `/v0/${params.baseId}/${params.tableName}`,
+        {
+          params: {
+            view: params.view,
+            offset,
+          },
+        }
+      );
+      records.push(...data.records);
+      offset = data.offset;
+    } while (offset);
+
+    return { data: records };
+  },
+});
+```
+
+On the other hand, if you know that your customers have a significant number of records stored in a third-party app (e.g. they have millions of records in their Airtable base), it's more memory-efficient to fetch a page of records at a time, processing each page before fetching the next page.
+In that case, we recommend adding `offset`, `cursor`, `page_number`, etc., as inputs of your action, and ensure that your action returns those values for the next iteration.
+
+:::tip parsing link headers
+If the API you're working with returns link headers, we recommend the [parse-link-header](https://www.npmjs.com/package/parse-link-header) package, which can be used to extract the next URL to use when paginating.
+:::
+
+## Create a generic HTTP client in your custom component
+
+Your component will contain multiple actions.
+To adhere to "don't repeat yourself" (DRY) principles, you should create a generic authetnicated HTTP client that all of your actions can reference.
+
+While you can use the built-in NodeJS `fetch` API or any other HTTP client of your choice, we recommend importing the `createClient` function from the custom component SDK.
+This function returns an instance of [axios](https://axios-http.com/docs/intro) with some defaults that tend to work best in Prismatic.
+Additionally, you can flip a `debug` flag to `true` to log out all requests and responses for debugging purposes.
+
+```typescript title="src/client.ts"
+import { createClient } from "@prismatic-io/spectral/dist/clients/http";
+import { Connection, util } from "@prismatic-io/spectral";
+
+export function getAcmeErpClient(acmeConnection: Connection) {
+  const { apiKey, endpoint } = acmeConnection.fields;
+
+  // Return an HTTP client that has been configured to point
+  // towards endpoint URL, and passes an API key as a header
+  return createClient({
+    baseUrl: util.types.toString(endpoint),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    debug: false,
+  });
+}
+```
+
+Now, each of our actions simply need to pass in a connection to the `getAcmeErpClient` function, and they'll be able to make HTTP calls to the Acme ERP API.
+
+### Handle errors from your generic HTTP client
+
+If you use the `createClient` HTTP function from the custom component SDK, you can leverage the built-in sibling function `handleErrors`.
+When an error is thrown from an action, that error is passed through the `handleErrors` function, which determines if the error originated from an HTTP call.
+If it did, additional information is extracted from the error and logged out for debugging purposes.
+
+```ts title="Provide better HTTP errors"
+import { handleErrors } from "@prismatic-io/spectral/dist/clients/http";
+
+export default component({
+  //...
+  hooks: {
+    error: handleErrors,
+  },
+});
+```
+
+## Determine when to build data sources
+
+[Data sources](configuration-wizard.mdx#config-variable-data-sources) allow your users to configure instances of your integration based on data stored in their third-party accounts.
+For example, after authenticating with Slack, a customer can select one of their Slack channels from a drop-down menu.
+
+When determining what data sources to add to your component, ask yourself:
+
+- **What inputs do my component's actions require**?
+  For example, almost every Asana action requires an Asana "Workspace ID".
+  It makes sense to create a "Select Workspace" datasource which presents a user with a dropdown menu of workspaces that the user has access to.
+- **Does a record type make sense in the context of a config wizard**?
+  For example, a customer may have thousands of "leads" in Salesforce.
+  It's doubtful that they would want to select a single lead from a dropdown menu when configuring an instance, so a "Select Lead" data source probably doesn't make sense to build.
+
+## Handle webhooks in custom components
+
+If the API you're building a custom component for supports event-driven notifications ([webhooks](webhooks/what-is-a-webhook.mdx)), it's helpful to include actions that subscribe an instance's flow to a webhook.
+Generally, we've found that four actions webhook-related actions are helpful to have:
+
+1. **List Webhooks**.
+   This action lists all webhooks that are configured in the third-party app.
+   We recommend only displaying webhooks that are pointed at the current instance's flows (otherwise, you'll see webhooks that are configured for other applications).
+   Check out the example in our [GitHub examples repo](https://github.com/prismatic-io/examples/blob/2e45a9aa2af25ddb511df364cb29df057367afd5/components/asana/src/actions/webhooks.ts#L55-L73) which demonstrates how to reference `context.webhookUrls` to filter webhooks down to only ones that match your current instance.
+2. **Create Webhook**
+   This action takes an event (or list of events, like `contact.create`) and a URL, which can be a webhook URL of a sibling flow.
+   If an ID of a webhook is returned, this action can return that ID.
+   See our [examples repo](https://github.com/prismatic-io/examples/blob/2e45a9aa2af25ddb511df364cb29df057367afd5/components/asana/src/actions/webhooks.ts#L115-L143) for an example of creating a webhook.
+3. **Delete Webhook by ID**
+   This action can take an ID of a webhook (fetched by the **List Webhooks** action), and delete that webhook by ID.
+4. **Delete Instance Webhooks**
+   This is a handy action to include, as it fetches a list of all webhooks in the third-party, filters them down to only webhooks pointed at the current instance, and removes just those webhooks.
+   You can leverage `context.webhookUrls` to determine which webhooks to delete.
+   Having this logic baked in to a single action can reduce complexity on your component's users.
+   Check out our [examples repo](https://github.com/prismatic-io/examples/blob/2e45a9aa2af25ddb511df364cb29df057367afd5/components/asana/src/actions/webhooks.ts#L176-L204) for an example of a **Delete Instance Webhooks** action.
+
+The above actions assume that an integration builder will create two flows: one that creates webhooks on instance deploy and one that removes webhooks on instance delete.
+If you'd like to simply that process for users of your component, you can bake webhook logic into a custom trigger's `onInstanceDeploy` and `onInstanceDelete` functions.
+See our [examples repo](https://github.com/prismatic-io/examples/blob/2e45a9aa2af25ddb511df364cb29df057367afd5/components/asana/src/triggers/eventTriggers.ts#L115-L152) for an example of how to create and delete webhooks automatically when an instance is created or deleted.
+
+## Add a "Raw Request" action
+
+If the API that you're building a custom component for is large, with hundreds of endpoints, there's a good chance that users of your custom component only need you to wrap a fraction of those endpoints.
+You probably have a good sense of which portions of the API are important to your component's users.
+But, what if your component's user needs to reach an endpoint that isn't wrapped in a purpose-built action?
+
+That's where **raw request** actions come in handy.
+You can build an action that takes an endpoint as an endpoint and handles the authentication and response on your user's behalf.
+
+See the [Raw Request](raw-request.mdx#building-an-http-raw-request-action-in-your-custom-component) article for an example of a raw request action that leverages the custom component SDK's `sendRawRequest` function.
+
+## Handle complex inputs in a custom action
+
+When an API endpoint that you're wrapping in a custom action expects a simple payload, like
+
+```
+POST /widgets
+
+{
+  "name": "string",
+  "color": "string",
+  "quantity": "number"
+}
+```
+
+it's easy to map each value in the POST request to an input.
+Here, we'd create a "name" input, a "color" input, and a "quantity" input.
+Then, we'd apply a `clean: util.types.toNumber` clean function to the "quantity" input to ensure it is cast to a number.
+
+But, some endpoints expect complex payloads that may contain arrays of objects with optional properties, etc.
+
+```
+POST /widgets
+{
+  "externalId": "abc-123",
+  "variants": [
+    {
+      "name": "Variant 1",
+      "color": "red",
+      "price": {
+        "usd": 5,
+        "ca": 5.5
+      }
+    },
+    {
+      "name": "Variant 2",
+      "color": "blue",
+      "price": {
+        "usd": 6
+      }
+    }
+  ]
+}
+```
+
+In this case, it's likely that an integration builder will want to construct a property like `variants` programmatically, and it's probably best to present two inputs, "External ID" which is `type: "string"` and "Variants" which is `type: "code"`.
+To accommodate both JSON and JavaScript object inputs, use the `util.types.toObject` function to ensure that what is entered becomes a JavaScript object.
+For example,
+
+```ts title="Convert a complex input to an object"
+const createWidgets = action({
+  display: {
+    label: "Create Widgets",
+    description: "Create widgets and their variants",
+  },
+  inputs: {
+    connection: connectionInput,
+    externalId: input({
+      label: "External ID",
+      type: "string",
+      comments: "The ID stored in Acme for this Widget type",
+      clean: util.types.toString,
+    }),
+    variants: input({
+      label: "Variants",
+      comments:
+        "Variant types of the widget. Ensure you provide an array of variant objects.",
+      type: "code",
+      language: "json",
+      clean: util.types.toObject,
+      example: JSON.stringify(
+        [
+          {
+            name: "Variant 1",
+            color: "red",
+            price: {
+              usd: 5,
+              ca: 5.5,
+            },
+          },
+          {
+            name: "Variant 2",
+            color: "blue",
+            price: {
+              usd: 6,
+            },
+          },
+        ],
+        null,
+        2
+      ),
+    }),
+  },
+  perform: async (context, params) => {
+    const client = createAcmeClient(params.connection);
+    const { data } = await client.post("/widgets", {
+      externalId: params.externalId,
+      variants: params.variants,
+    });
+    return { data };
+  },
+});
+```
+
+## Handle file inputs in a custom component
+
+If your action expects a file as an input, you should expect three types of inputs from your users:
+
+1. Strings, either generated from previous steps or static strings.
+   In the case of strings, you should write the string contents to a file via the API.
+2. A JavaScript object.
+   In this case, the user probably expects that you'll serialize the input to JSON and write the JSON string as the file contents.
+3. A file from a previous step.
+   This is probably the most common input to expect.
+   When binary files are passed between steps, they are passed as JavaScript objects of the form `{ data: Buffer, contentType?: string }`.
+
+In all of these cases, if you pass the input through the `util.types.toData` function, binary files will remain files, strings will be converted to `{ data: Buffer.from(input), contentType: "text/plain" }` and JavaScript objects are converted to `{ data: Buffer.from(JSON.stringify(input)), contentType: "application/json"}`.
+
+You can turn the data into a `data`/`contentType` pair and reference each property in your `perform` function:
+
+```ts title="Handle various input types as binary file contents"
+const attachFileToAccount = action({
+  display: {
+    label: "Attach File to Account",
+    description: "Upload a file to an account",
+  },
+  inputs: {
+    connection: connectionInput,
+    file: input({
+      label: "File Attachment",
+      type: "data",
+      comments: "The file to attach to an account",
+      clean: util.types.toData,
+    }),
+  },
+  perform: async (context, params) => {
+    const client = createAcmeClient(params.connection);
+    const { data: fileData, contentType } = params.file;
+    const { data } = await client.post("/accounts/attachments", fileData, {
+      headers: { "Content-Type": contentType },
+    });
+    return { data };
+  },
+});
+```

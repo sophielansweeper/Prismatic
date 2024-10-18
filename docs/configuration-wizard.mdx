@@ -1,0 +1,400 @@
+---
+id: configuration-wizard
+title: Configuration Wizard
+description: Give your customers a simple way to configure your integrations
+---
+
+import TabItem from "@theme/TabItem";
+
+The integrations that you build in the [integration designer](building-integrations.mdx) are meant to be reusable, and deployable across your hetrogenous customer base.
+To make this possible, you need to provide a way for your customers to configure your integrations to work with their specific environment.
+
+When your customer configures and activates an instance of your integration, they'll walk through a configuration wizard where they'll authenticate with the third-party apps you're integrating with, and provide any other information that's needed to make the integration work.
+Some integrations have simple configuration wizards and might only require authentication to a third-party app, while others might involve multiple pages of configuration with dynamically generated dropdown menus, toggles, text fields and more.
+
+This article covers how to build a configuration wizard for your integration that gives your customers a pleasent deployment experience.
+
+## Configuration wizard designer
+
+Customers enable and configure an instance of an integration through a **Configuration Wizard**.
+They work through **Configuration Pages**, authenticating with third-party apps and setting config variables.
+
+**Configuration pages** can contain config variables of various types and helper text and images to prompt the user where to look.
+If your integration requires manual configuration of webhooks, the config wizard can also display the instance's webhook endpoints and API keys (see [Endpoint API keys in the config wizard](endpoint-configuration.mdx/#endpoint-api-keys-in-the-config-wizard)).
+
+<ExampleTabs>
+<TabItem value="lowcode">
+
+If you're building your integration with low-code, you can use the Config Wizard Designer within the integration designer to create your customers' configuration experience.
+
+<Screenshot
+  filename="integrations/configuration-wizard-designer.png"
+  alt="Screenshot of the configuration wizard designer"
+/>
+
+You can add a configuration page by clicking **+ Config Page**, and you can rename a config page or add a short description to the page by clicking the pencil icon beside the page.
+
+</TabItem>
+<TabItem value="codenative">
+
+Just like low-code integrations, code-native integrations include a [config wizard](configuration-wizard.mdx).
+The config wizard can include things like OAuth 2.0 connections, API key connections, dynamically-sourced UI elements (data sources), and other advanced configuration wizard steps.
+
+A config wizard consists of multiple pages.
+Each page has a title, which is derived from the `key` of the configPage object, and a `tagline` as well as a set of `elements` (individual config variables).
+
+For example, a config wizard might contain a page for a Slack OAuth 2.0 connection, a page where the user selects a channel from a dynamically-populated dropdown menu, and a page where a user enters two static string inputs:
+
+```typescript title="Example config pages definition"
+import { configPage, configVar } from "@prismatic-io/spectral";
+import { slackConnectionConfigVar } from "./connections";
+import { slackSelectChannelDataSource } from "./dataSources";
+
+export const configPages = {
+  Connections: configPage({
+    tagline: "Authenticate with Slack",
+    elements: {
+      "Slack OAuth Connection": slackConnectionConfigVar,
+    },
+  }),
+  "Slack Config": configPage({
+    tagline: "Select a Slack channel from a dropdown menu",
+    elements: {
+      "Select Slack Channel": slackSelectChannelDataSource,
+    },
+  }),
+  "Other Config": configPage({
+    elements: {
+      "Acme API Endpoint": configVar({
+        stableKey: "acme-api-endpoint",
+        dataType: "string",
+        description: "The endpoint to fetch TODO items from Acme",
+        defaultValue:
+          "https://my-json-server.typicode.com/prismatic-io/placeholder-data/todo",
+      }),
+      "Webhook Config Endpoint": configVar({
+        stableKey: "webhook-config-endpoint",
+        dataType: "string",
+        description:
+          "The endpoint to call when deploying or deleting an instance",
+      }),
+    },
+  }),
+};
+```
+
+For full documentation, see the [Build Code-Native](code-native-integrations.mdx#code-native-integration-config-wizard) article.
+
+</TabItem>
+</ExampleTabs>
+
+### Displaying additional helper text in the configuration wizard
+
+<ExampleTabs>
+<TabItem value="lowcode">
+
+To add **helper text**, including headings (H1 - H6) or paragraphs, click the **+ Text/Image** button and select the type of text you'd like to add.
+
+To add an **image**, your image will need to be publicly accessible online.
+Enter the public URL of the image you'd like shown on your config page.
+
+For further customization, you can choose to add **Raw HTML** to your config page.
+
+</TabItem>
+<TabItem value="codenative">
+
+In addition to config variables, you can add helpful text and images to guide your customers as they work through your config wizard.
+To add HTML to the config wizard (which can include links, images, etc), include a string `element` to a `configPage` definition:
+
+```typescript title="Include helper text in the config wizard" {4-8}
+export const configPages = {
+  Connections: configPage({
+    elements: {
+      helpertext1: "<h2>Asana Instructions</h2>",
+      helpertext2:
+        "To generate an Asana API Key, visit the " +
+        '<a href="https://app.asana.com/0/my-apps" target="_blank">developer portal</a> ' +
+        'and select "Create new token".',
+      "Asana API Key": connectionConfigVar({
+        stableKey: "f0eab60f-545b-4b46-bebf-04d3aca6b63c",
+        dataType: "connection",
+        inputs: {
+          // ...
+        },
+      }),
+    },
+  }),
+};
+```
+
+<Screenshot
+  filename="code-native-integrations/helper-text.png"
+  alt="A page in the config wizard with additional helper text"
+/>
+
+</TabItem>
+</ExampleTabs>
+
+### Displaying webhook information in the configuration wizard
+
+Your instance's webhook endpoints and API keys can be displayed in the configuration wizard.
+Click **+ Text/Image** and then select **Trigger Details** as the **Element Type**.
+You can opt to show all flows' URLs, or the URL for a specific flow.
+
+<Screenshot
+  filename="configuration-wizard/add-trigger-details.png"
+  alt="Add trigger details to the configuration wizard"
+/>
+
+When your customers deploy an instance of your integration, they'll see the webhook information on the configuration page.
+This is handy if they need to manually configure webhooks in a third-party app.
+
+<Screenshot
+  filename="configuration-wizard/display-trigger-details.png"
+  alt="Display trigger details in the configuration wizard"
+/>
+
+### Adding configuration variables
+
+You can define names, descriptions, variable types, and optional default values of config variables for your configuration wizard from the config wizard designer in the low-code builder, and you'll reference the values that customers set for each in your integration.
+
+<Screenshot
+  filename="integrations/integration-config-vars.png"
+  maxWidth="500px"
+  alt="Config variables drawer in Prismatic app"
+/>
+
+When it comes time for your customer-facing teams to deploy your integration, they can enter or select configuration options and tailor the integration for a particular customer without the involvement of integration builders.
+
+Config variables that you define in the config variable drawer can be used within your integration as inputs or steps, or through the [Branch](components/branch.mdx) component to drive branching logic.
+
+## Config variable data types
+
+There are several types of configuration variables:
+
+- **String** is a standard string of characters
+- **Date** follows the form `mm/dd/yyyy`, and presents end users a calender widget to choose a date
+- **Timestamp** follows the form `mm/dd/yyy, HH:MM [AM/PM]`, and presents end users a calendar and time widget to choose a date and time
+- **Picklist** allows you to define a series of options that your end user can choose from.
+  Picklists are presented to end users as a dropdown menu of options.
+  A picklist value can be up to 64 characters in length.
+- **Code** lets your end user enter JSON, XML, or other formatted code blocks.
+  This is handy if customers have unique formats for recurring reports, or other formatted documents that differ from customer to customer.
+  Choose a Code Language when you create the config variable for syntax highlighting.
+- **Boolean** allows your end user to choose either true or false.
+- **Number** allows your end user to enter a number (integer or decimal).
+- **Object Selection** allows your end user to select zero or more objects from a list.
+  This config variable type always sources data from a [data source](#config-variable-data-sources).
+- **Object Field Map** allows your end user to map a series of fields.
+  This config variable type always sources data from a [data source](#config-variable-data-sources).
+- **JSON Form** allows you to leverage [JSON Forms](https://jsonforms.io/) to build your users' configuration experience.
+  The code backing JSON Form config variables are developed in [custom components](custom-components/writing-custom-components.mdx) and return objects that are made up of key/value pairs.
+- **Connection** is made up of multiple fields that determine how a component should connect to an external API.
+  It might include a username, password, API key, endpoint URL, or several other things.
+  Note that connection config variables can only be added to the first config page, as subsequent pages my use the connection to dynamically generate other config variables.
+
+:::tip Inputs are sent to actions as strings
+The type of config variable you choose affects the UI that the end user interacts with (they get toggles for booleans, date pickers for timestamps, an editor with syntax highlighting for code, etc).
+Regardless of what type of config variable you choose, though, all values are presented to actions as strings.
+
+If you're [writing a custom component](custom-components/writing-custom-components.mdx), note that you will need to cast your action's input to the correct format.
+For example, you can `JSON.parse()` a JSON string, or run `util.types.toNumber()` or `util.types.toBool()` on a number or boolean input. You can use a [`clean`](custom-components/writing-custom-components.mdx#cleaning-inputs) function to simplify type casting.
+:::
+
+Once you've added a config variable, you can use it as an inputs to actions within your integration.
+
+### List and key/value list config variables
+
+In addition to representing a **single** value, some config var types can represent a **list** of values, or a list of **key/value pairs**.
+This is helpful for when you want your users to be able to enter an unknown number of items as the values of a configuration variable.
+For example, you may want users to select one or more values from a **picklist** menu.
+
+Config variables with a data type of **string**, **date**, **timestamp**, **picklist**, **code**, or **boolean** can be configured as lists or key/value lists.
+
+<ExampleTabs>
+<TabItem value="lowcode">
+
+To create a **list** config variable, create a new config variable and select **LIST** under **Config Var Type**:
+
+<Screenshot
+  filename="integrations/list-config-variable.png"
+  maxWidth="500px"
+  alt="Create list config variable in Prismatic app"
+/>
+
+When a list config variable is referenced by a step's input, that step's action receives a JavaScript array of values.
+
+To create a **key/value list** config variable, create a new config variable and select **KEY/VALUE LIST** under **Config Var Type**:
+
+<Screenshot
+  filename="integrations/key-value-list-config-variable.png"
+  maxWidth="500px"
+  alt="Create key/value list config variable in Prismatic app"
+/>
+
+</TabItem>
+<TabItem value="codenative">
+
+To create a **list** or **key/value list** config variable in a code-native integration, give your config variable a `collectionType` property of `valuelist` or `keyvaluelist`:
+
+```ts title="Create a valuelist config variable in code-native"
+configVar({
+  dataType: "string",
+  stableKey: "my-vals",
+  collectionType: "valuelist",
+  description: "Provide a list of vals",
+});
+```
+
+</TabItem>
+</ExampleTabs>
+
+When a **list** config variable is referenced by a step in the low-code designer or by a flow in a code-native integration, the config variable contains an array of strings like `["First Option", "Third Option", "Second Option"]`.
+
+When a **key/value list** config variable is referenced by a low-code step or code-native flow, the config variable contains an array of key/value pairs.
+
+```javascript
+[
+  {
+    key: "some-key",
+    value: "Some value",
+  },
+  {
+    key: "another-key",
+    value: "Another value",
+  },
+];
+```
+
+## Config variable data sources
+
+**Data Sources** allow you to populate a config variable dynamically after they enter some connection settings.
+This is handy because customers' configuration differs in third-party apps.
+Customers have different Facebook business names, different Google Analytics accounts, different fields on Salesforce resources, etc.
+You can pull in those things, and allow customers to choose their Slack channel, select a folder in Google Drive, map fields from Salesforce, etc.
+
+If you would like to populate a config variable dynamically from a data source, first ensure that a **connection** config variable for the third-party app is present on your first config page.
+Those are generally automatically created when you add a step to your integration for that third-party.
+On a subsequent page, add your config variable.
+Under **Data Source**, select the component and data source that you would like to use (for example, the [Slack Select Channel](components/slack.mdx#select-channel) data source).
+
+Your customers will authenticate with the third-party app on their first config page, and will see data dynamically loaded from the third-party populate the config variable.
+
+### JSON Forms config variables
+
+[JSON Forms](https://jsonforms.io/) is a powerful form-generating tool that lets you transform JSON schema into a fillable form, and JSON Forms config variables are available on enterprise plans.
+You can build a static JSON form using the built-in [JSON Forms](components/jsonforms.mdx) component, or create dynamic configuration experiences by adding JSON Forms [data sources](custom-components/writing-custom-components.mdx#json-forms-data-sources) to your custom components.
+
+See the full [JSON Forms](jsonforms.mdx) article for more information.
+
+## Connection config variables
+
+Connections are a special type of config variable that contain the information necessary to connect to a third-party app.
+A connection might include a simple username and password pair, or might declare all the fields required for OAuth 2.0 (like auth URL, client ID, etc.).
+
+You can read more about connections and OAuth 2.0 on the [Connections](connections.mdx) article.
+
+## Config variable visibility
+
+By default, config variables that you add to your integration's configuration wizard are visible to customers who deploy instances of your integration.
+But, there are some situations where you may want to hide a config variable from the config wizard.
+For example:
+
+- All instances of your integration might share an API key to a third-party app.
+  You may want to set that API key as a config variable, but not make it accessible or visible to your customer.
+- Your customer's instance need an API key to access your app, but you want to set it on their behalf as part of the instance deployment process.
+  In that case, you want the customer user to be able to set it programmatically behind the scenes, but not see its value in the UI.
+
+<ExampleTabs>
+<TabItem value="lowcode">
+
+To configure visibility in the low-code designer, open the config wizard designer and select a config variable.
+Then, select an option from the **Permission and Visibility** dropdown menu.
+You have three options:
+
+- **Customer** is the default value.
+  Customer users can view and edit the config variable, and it will always appear in the config wizard.
+- **Embedded** makes it so the config variable does not show up in the config wizard, but your app is able to [set it programmatically](embedding-marketplace.mdx#dynamically-setting-config-variables-in-marketplace) through the embedded SDK.
+  This is helpful if you want to set an API key for a user during the configuration process, but not allow the user to see or edit the value that is set.
+- **Organization** makes it so the config variable is not visible to your customer, and is not able to be set programmatically by your app.
+  Config variables marked **organization** must have a default value, or else your team members will need to set the value on behalf of your customer.
+
+<Screenshot
+  filename="integrations/config-var-visibility.png"
+  maxWidth="400px"
+  alt="Set visibility for config variables in Prismatic app"
+/>
+
+Additionally, you can toggle the **Visible to Organization** toggle to false to hide the config variable from organization team members who open a customer's instance config wizard screen.
+The config variable is still available programmatically to organization members, but this prevents a sensitive config variable from being displayed unintentionally on an organization team member's screen.
+
+</TabItem>
+<TabItem value="codenative">
+
+If you are building a code-native integration, each config variable can have a `permissionAndVisibilityType` property with one of three values:
+
+- `customer` is the default value.
+  Customer users can view and edit the config variable, and it will always appear in the config wizard.
+- `embedded` makes it so the config variable does not show up in the config wizard, but your app is able to [set it programmatically](embedding-marketplace.mdx#dynamically-setting-config-variables-in-marketplace) through the embedded SDK.
+  This is helpful if you want to set an API key for a user during the configuration process, but not allow the user to see or edit the value that is set.
+- `organization` makes it so the config variable is not visible to your customer, and is not able to be set programmatically by your app.
+  Config variables marked **organization** must have a default value, or else your team members will need to set the value on behalf of your customer.
+
+Additionally, `visibleToOrgDeployer` determines if an organization user will see this config variable in the config wizard UI.
+While organization team members always have programmatic access to instances' config variables and their values, this helps to visually conceal some config variable values like generated metadata from data sources, etc.
+Defaults to `true`.
+
+```ts title="A debug config variable that is only visible to org team members" {6,7}
+configVar({
+  stableKey: "debug",
+  dataType: "boolean",
+  description: "Enable debug logging",
+  defaultValue: "false",
+  permissionAndVisibilityType: "customer",
+  visibleToOrgDeployer: true,
+});
+```
+
+</TabItem>
+</ExampleTabs>
+
+### Write-only connection inputs
+
+In some situations, it can be helpful to make a connection input **write-only** (e.g. a user can write a value, but not read it).
+For example,
+
+1. Bob and Sue may be two customer users within the same customer.
+   Sue is an administrator for a third-party app, and Bob is not, but Bob knows more about your integration's configuration.
+   It can be helpful to have Sue enter her credentials into their instance, but have Bob take care of configuring or reconfiguring the instance.
+   By making the connection inputs write-only, Bob will not be able to see Sue's credentials, but can view and change other config variables on the instance.
+2. Your support team may want to view the configuration of a customer's instance.
+   But, you don't want your support team to accidentally view your customer's API keys.
+   By setting a connection's inputs to write-only, your customer can configure their instance and your team can observe the rest of the instance's configuration variables (but not the write-only values).
+
+To configure a connection's input to be write-only, open a connection config variable within the config wizard designer and click the gear icon next to an input.
+Toggle **Write Only**.
+
+<Screenshot
+  filename="configuration-wizard/enable-write-only.png"
+  maxWidth="500px"
+  alt="Enable write-only on an input value"
+/>
+
+Note that once you set a connection input to **Write Only** and save your integration, you will be unable to disable the write-only setting.
+
+When a customer first deploys an instance of your integration, they will see inputs like they normally would, but with text indicating that the values are write-only.
+
+<Screenshot
+  filename="configuration-wizard/write-only-first-time.png"
+  maxWidth="800px"
+  alt="Customer enters their write-only credentials the first time"
+/>
+
+If the customer reconfigures the instance, the sensitive values are not accessible via the API and masked placeholders are presented instead.
+A customer user can choose to overwrite the write-only values with new values, but cannot view the existing values.
+
+<Screenshot
+  filename="configuration-wizard/write-only-subsequent-times.png"
+  maxWidth="800px"
+  alt="Customer enters their write-only credentials on subsequent times"
+/>

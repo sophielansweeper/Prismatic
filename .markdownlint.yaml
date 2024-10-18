@@ -1,0 +1,5 @@
+{
+  "MD013": false, # No one cares about line length in MD
+  "MD026": false, # Having a question mark in a header is fine...
+  "MD033": false, # Needed for inline HTML in mdx
+}
